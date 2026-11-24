@@ -360,7 +360,7 @@ Octopus takes the same line as its rule B8, "modules use the same registry as ex
 | Built-ins use the community's door | **No.** The UI's built-in modules make about 2,050 imports from shared code, and only about 315 of them come through `ui/src/platform/`, the contract. The rest reach straight into `shell/` (462), `app/` (365) and `engine/` (903). In the engine, modules see all 752 public types of `Lapin.Platform` | **Large** (C.1) |
 | Load without rebuilding | Engine modules are loaded at run time from `artifacts/modules/<id>/` (`ModuleLoader`), into the default load context, with no isolation or unload. UI modules are compiled into the build (`virtual:lapin-modules`) | Large for the UI, medium for the engine (C.2) |
 | Extensions platform | The store is live: content packs, Python scripts, signed packages, paid extensions at 0 % (`docs/plan-extensions.md`). JS plug-ins are planned "later", and C# modules "for partners, signed" | The platform is there; what it may carry is narrow |
-| A way into the core | The repository is private; contributor-facing docs are half in Romanian; no CONTRIBUTING | Large (C.6) |
+| A way into the core | The repository is private; no CONTRIBUTING; `docs/decisions-pending.md` and parts of `docs/history.md` are still in Romanian | Large (C.6) |
 
 The core of the problem is the fourth row. Today a community developer would get a narrower and different door than Lapin's own modules use. Each time a built-in module reaches past the contract, the contract falls further behind what a real module needs. This is the "privileged first-party code path" that Octopus's B8 rejects.
 
@@ -412,7 +412,7 @@ A community module that declares a class then gets a working inspector, Python a
 ### C.6 A way into the core
 
 This is only for a part of Lapin the owner chooses to open. The premium modules stay private, as `CLAUDE.md` says.
-1. **Contributor docs in English.** The forum is already English. `docs/plan.md`, the audits and parts of `docs/plan-extensions.md` are Romanian, which most contributors cannot read. Keep Romanian for the user guide (`docs/user/ro`).
+1. **Contributor docs in English.** The forum is already English. On 24.11.2026 the plan documents this file cites were translated from Romanian: `docs/plan.md`, `docs/format-lapin.md`, `docs/transfer.md`, `docs/plan-python-scripting.md`, `docs/plan-extensions.md` and both audits. Still in Romanian: most rows of `docs/decisions-pending.md` and some paragraphs of `docs/history.md`. New docs are written in English; keep Romanian for the user guide (`docs/user/ro`).
 2. **`CONTRIBUTING.md`:** how to build, `pnpm check` (1.1), the spec-test rule (3.1), the commit style, and the licence: inbound MIT, as outbound. Also say what will not be accepted: anything that makes an open module depend on a premium one.
 3. **Areas with owners**, as Blender's modules have, mapped to `engine/src/Modules/<Group>`. Each area has a spec file and its numbered rules. A pull request is accepted by `pnpm check`, its spec tests and review (Claude, then the area's owner), which is the same mechanical acceptance as Octopus's `docs/orchestration.md`.
 4. **Good first issues** taken from the audits' smaller bugs. There are about 110 confirmed in `docs/audit-2026-11-22.md`, and each comes with a file, a line and a reproduction.
