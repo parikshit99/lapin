@@ -339,6 +339,87 @@ These cost little now and make every option in A.0 cheaper later.
 5. **The laws of 3.2 and the spec tests of 3.1 are the conformance suite.** They are written against commands and results, never against C# internals, so any replacement engine, native or not, must pass them unchanged. This is what makes a move safe, gradual or whole. The incumbents never had such a suite, and it is a large part of why they could not move.
 6. **The data model behind a mapping.** New Lapin-only concepts (intent, constraints, sub-element names) live in Lapin's own components beside the IFC entities, not inside IFC attributes. Then the in-memory model can drift from IFC where editing needs it, as Octopus's does, without breaking import and export.
 
+## Community: a small core that others build on, as Blender is
+
+**What makes Blender work for a community.** Being open source is not what does it. These things are:
+1. **Everything is an operator.** Every action, built in or not, is a registered operator with typed properties, undo and a keymap entry. Add-ons call the same operators the interface does, and register new ones the same way.
+2. **One reflection layer (RNA) describes all data.** From it come the Python API, the property panels, animation, drivers and the generated API reference. A type added by anyone gets all of these for free.
+3. **The interface is written in the same API the community uses.** Blender's own panels and menus are Python, so an add-on can do anything the shipped interface does, and reading the shipped code is how people learn.
+4. **One way in.** `register()` / `unregister()`, a manifest, reload without restarting, and since 4.2 an extensions platform with permissions.
+5. **A way into the core, too.** A public tracker and code review, module owners who decide for their area, developer docs, and a fund that pays core developers. Most of Blender's features were once someone's add-on or patch.
+
+Octopus takes the same line as its rule B8, "modules use the same registry as extensions; if a module needs a private hook, fix the registry". It also takes the reflection layer as B4 (a derive macro per component type).
+
+**Where Lapin stands (24.11.2026).**
+
+| Blender's piece | Lapin | Gap |
+|---|---|---|
+| Everything is an operator | Every tool is one engine command with JSON arguments and one undo step; the command catalogue describes them all (`catalogue.json`) | Small. 2.1 closes the multi-command gestures |
+| Python drives the same operators | `lapinbim` drives the model through the protocol, typed from the catalogue (`docs/plan-python-scripting.md`) | Small. Python cannot yet add panels or tools to the interface (C.3) |
+| One reflection layer | `ClassDescriptor` per IFC class in the engine; property sections written by hand per module in the UI | Medium (C.4) |
+| Built-ins use the community's door | **No.** The UI's built-in modules make about 2,050 imports from shared code, and only about 315 of them come through `ui/src/platform/`, the contract. The rest reach straight into `shell/` (462), `app/` (365) and `engine/` (903). In the engine, modules see all 752 public types of `Lapin.Platform` | **Large** (C.1) |
+| Load without rebuilding | Engine modules are loaded at run time from `artifacts/modules/<id>/` (`ModuleLoader`), into the default load context, with no isolation or unload. UI modules are compiled into the build (`virtual:lapin-modules`) | Large for the UI, medium for the engine (C.2) |
+| Extensions platform | The store is live: content packs, Python scripts, signed packages, paid extensions at 0 % (`docs/plan-extensions.md`). JS plug-ins are planned "later", and C# modules "for partners, signed" | The platform is there; what it may carry is narrow |
+| A way into the core | The repository is private; contributor-facing docs are half in Romanian; no CONTRIBUTING | Large (C.6) |
+
+The core of the problem is the fourth row. Today a community developer would get a narrower and different door than Lapin's own modules use. Each time a built-in module reaches past the contract, the contract falls further behind what a real module needs. This is the "privileged first-party code path" that Octopus's B8 rejects.
+
+### C.1 One door for built-in modules and the community
+
+1. **The UI contract becomes a package.** `ui/src/platform/` grows into `@lapin/sdk`: the module contract, plus what the built-ins really use from `shell/` (cells, dialogs, prompts, colour fields, parameter editors), `app/store` (read-only selectors), and `engine/session` (typed `execute`/`query`, A.1). Built-in modules import only from it.
+2. **A ratchet** (`scripts/check-module-imports.mjs`) on imports from `ui/src/modules/*` into anything except the SDK and the module's own folder. Today's count is about 1,730. It only goes down, and reaches zero.
+3. **The engine contract becomes an assembly.** `Lapin.Sdk` holds `IModuleRegistry`, `ClassDescriptor`, the producers, `IEdit`, `IModelView`, and the geometry types modules need. Modules reference `Lapin.Sdk` and `Lapin.Model`, not `Lapin.Platform`. What a module needs from the platform's insides moves into the SDK on purpose, or becomes a service (`IModuleRegistry.Service<T>` already exists).
+4. **The SDK is versioned.** It uses semver, with a public-API baseline file (`Microsoft.CodeAnalysis.PublicApiAnalyzers` for C#, `api-extractor` for TypeScript). Removing or changing a member fails the build unless the major version goes up.
+5. **Rule:** if a built-in module needs something the SDK does not have, add it to the SDK. Never reach around it.
+
+**Done when:** every built-in module, engine and UI, builds against the SDK alone, and the ratchet is at zero.
+
+### C.2 Extensions loaded at run time, isolated
+
+1. **UI modules from a folder.** A UI extension is an ES module bundle plus `module.json`, loaded with `import()` from the extensions folder on desktop. It gets the same `@lapin/sdk` instance as the built-ins, as a shared import map. A built-in module may also be shipped this way, which proves the path works.
+2. **Engine extensions out of process, by default.** A community engine extension runs as its own process and speaks the protocol Lapin already has (JSON-RPC, as the host does for the UI). It registers its commands, queries and geometry producers by name through a `module.register` handshake. This has four advantages:
+   - It works in any language: Python, C#, Rust, JS.
+   - A crash or a hang cannot take the session down.
+   - Permissions are enforced at the protocol (`EngineDispatcher.AllowedRemote` already does this for guests).
+   - **It survives a change of engine stack (A.0).** An in-process C# DLL does not. Of everything in this section, this matters most: every in-process C# extension written now is a reason never to leave .NET.
+3. **In-process C# modules** stay for Lapin's own modules and signed partners. Each gets its own collectible `AssemblyLoadContext`, so it can be unloaded and updated without a restart.
+4. **Reload without restarting** for both kinds, in a developer mode. Blender's quick edit-and-reload loop is what keeps add-on authors working.
+
+### C.3 Python and declarative UI: extend the interface without writing React
+
+Blender's lowest step in is "a Python file that adds a panel". Lapin's equivalent:
+1. **Declarative panels, tools and menu items**, described as data: fields, buttons, the command each one runs, and a gesture from `Gesture` in `module.ts`. The SDK renders them with the same components as the built-ins. A Python script or an out-of-process extension sends that description with `ui.register`, and the interface draws it on desktop and in the browser.
+2. The **Script panel's script tools** (decision 489) become the first users of it.
+3. Built-in modules move their simple property sections to the same description, which proves it is enough and keeps it honest.
+
+### C.4 One description per class, many uses
+
+As with Blender's RNA and Octopus's B4: extend `ClassDescriptor` (or a property catalogue beside `catalogue.json`) with each attribute's type, unit, range, label, group, and whether it is a type or an instance parameter. From it, generate:
+- the default property panel;
+- the Python attributes (`wall.height`);
+- schedule columns, filters and formula fields (`FieldCatalog.cs` already lists fields);
+- the API reference.
+
+A community module that declares a class then gets a working inspector, Python access, schedules and docs without writing any of them. Hand-written sections stay where a module wants more.
+
+### C.5 Developer experience
+
+- `pnpm create lapin-extension <kind>`: templates for a content pack, a Python tool, a UI module and an out-of-process engine module, each with a test and a CI file for the catalogue's validator.
+- **API reference generated** from the SDK, the command catalogue and the class descriptions (C.4), published beside the user guide.
+- **Example extensions** in `lapin-extensions`, one per kind, kept building by its CI against each release.
+- **A compatibility promise:** the SDK's major version and the protocol's version are in every manifest, and the store refuses an extension built for a version the app no longer serves.
+
+### C.6 A way into the core
+
+This is only for a part of Lapin the owner chooses to open. The premium modules stay private, as `CLAUDE.md` says.
+1. **Contributor docs in English.** The forum is already English. `docs/plan.md`, the audits and parts of `docs/plan-extensions.md` are Romanian, which most contributors cannot read. Keep Romanian for the user guide (`docs/user/ro`).
+2. **`CONTRIBUTING.md`:** how to build, `pnpm check` (1.1), the spec-test rule (3.1), the commit style, and the licence: inbound MIT, as outbound. Also say what will not be accepted: anything that makes an open module depend on a premium one.
+3. **Areas with owners**, as Blender's modules have, mapped to `engine/src/Modules/<Group>`. Each area has a spec file and its numbered rules. A pull request is accepted by `pnpm check`, its spec tests and review (Claude, then the area's owner), which is the same mechanical acceptance as Octopus's `docs/orchestration.md`.
+4. **Good first issues** taken from the audits' smaller bugs. There are about 110 confirmed in `docs/audit-2026-11-22.md`, and each comes with a file, a line and a reproduction.
+5. **The open-core line in writing.** List what is open and stays open, what the hooks are for premium modules (`docs/overrides.md`), and the promise that a feature contributed to the open core will not be moved behind a subscription. Contributors need that answer before they give their time.
+
+**What this changes for AI-run work.** A stable, small SDK is also what makes AI agents effective. A brief can say "read `Lapin.Sdk` and the module's own folder" instead of "the platform", and tests written against the SDK and the protocol hold across rewrites. That is the same door for people, agents and a future engine.
+
 ## Process: how the AI work itself is run
 
 These are the parts of Octopus's process that pay off in an AI-run project, and fit Lapin's pace.
@@ -382,5 +463,11 @@ These are the parts of Octopus's process that pay off in an AI-run project, and 
 | Arch. | A.3 threading rules and test | S–M | silent races in module generators |
 
 | Arch. | A.4 keep the move possible | S each | a rewrite becoming the only way out |
+| Comm. | C.1 one SDK for built-ins and extensions | L | built-ins using a door the community cannot |
+| Comm. | C.2 run-time UI modules; out-of-process engine extensions | M–L | rebuilds to extend; extensions that tie Lapin to .NET |
+| Comm. | C.3 declarative panels from Python | M | no low step into the interface |
+| Comm. | C.4 one description per class | M | panels, Python and schedules written by hand per class |
+| Comm. | C.5 templates, generated API reference | S–M | no starting point for authors |
+| Comm. | C.6 contributor docs, owners, the open-core line | S, the owner's call | no way into the core |
 
-A.1 and the benchmark of A.4 can go with wave 1. A.2 belongs with 2.2, and A.3 with 3.2. A.0 is the user's decision, made from A.4's table and the prototype's results.
+A.1 and the benchmark of A.4 can go with wave 1. A.2 belongs with 2.2, and A.3 with 3.2. A.0 is the user's decision, made from A.4's table and the prototype's results. C.1's ratchet can start in wave 1; C.2's out-of-process design should be settled before the first community engine extension, so it does not tie Lapin to .NET; C.6 is the owner's decision on what to open.
