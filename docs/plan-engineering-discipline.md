@@ -214,7 +214,49 @@ Each law is one test class with a command generator over the catalogue (`catalog
 | Panels and serialisation | Generated from a derive macro on each component type | Written per module; the command catalogue is generated (`scripts/command-catalogue.mjs`) |
 | Threads | Single-threaded by contract; parallel only inside rebuilds | Parallel element builds (`Parallel.For` in `Session.cs`), concurrent deliveries |
 
-**Keep Lapin's stack.** The engine–interface protocol is what gives Lapin its browser edition, shared sessions, Python, MCP and the assistant from one codebase. A rewrite would trade all of that for gains Lapin does not need yet. The protocol has a price, though: two of the audits' three recurring causes, stale answers (2.2) and several undo steps for one gesture (2.1), live on that boundary. The three ideas below reduce that price without changing the stack.
+**Keep the stack for now; decide on measured targets, not on taste.** The engine–interface protocol is what gives Lapin its browser edition, shared sessions, Python, MCP and the assistant from one codebase. A rewrite today would trade all of that for gains not yet shown to be needed. But "not yet" is the trap the incumbents fell into, so the case for moving is set out in full below (A.0), with the measurements that decide it and the work that keeps the move possible (A.4). The protocol also has a price today: two of the audits' three recurring causes, stale answers (2.2) and several undo steps for one gesture (2.1), live on that boundary. A.1 to A.3 reduce that price without changing the stack.
+
+### A.0 The case for another stack
+
+**What the incumbents teach.** The established BIM tools started in the 1980s and 1990s. Years later they are still held back, and it is not by their language. It is by four early choices that everything else was built on:
+- **The threading model.** Regeneration that was single-threaded by design is widely reported as the main limit on large models. Parallelising it afterwards means proving that no code anywhere relied on running alone.
+- **The memory layout.** A model of many small heap objects with pointers between them cannot be streamed, mapped or shared, and becomes slow at scale.
+- **The data model.** Whatever the in-memory model is becomes the API of every add-on and every file, so it can never be changed.
+- **The interface toolkit.** An interface woven into the model code ages with it.
+
+None of these can be fixed later without a rewrite, and a rewrite of a product with users rarely happens. The lesson is not "write it in Rust". It is: **decide these four while the code is young, on evidence, and keep the decision reversible until then.**
+
+**Where Lapin's own numbers point the same way.** These are from Lapin's own measurements, not from Octopus:
+- **Memory per element.** The builds of a model of 4,000 walls and 14,000 elements hold about 700 MB of managed heap (`SessionTuning.Desktop` in `Session.Builds.cs`). A 1.2 GB IFC needs 15.7 GB after import, and at first could not be read at all, because a .NET string holds at most 1 GB (`docs/plan-instancing.md`, 29.10.2026). Hospitals, airports and campuses are 10 to 100 times the 14,000-element model.
+- **Allocation and the garbage collector.** On the generated 18,000-entity model `gen-10`, changing one wall type took 4.6 s and allocated 19.7 GB; opening it allocated 14 to 20 GB. The profile shows "a large share is garbage-collection suspension" (`docs/experiment-editing-speed.md`). The fixes taken (decisions 423–426) cut this by about a third. That helped, but the cost grows with the model, and a garbage-collected heap of millions of small objects is the memory-layout trap above.
+- **The browser and the interface heap.** The browser edition has a 2 GB ceiling and one thread (`docs/plan-browser-engine.md`, `SessionTuning.Browser`). At a million instances, the interface's JavaScript heap is 1.07 GB, and turning the view hitches at 150 ms, "likely the garbage collector" (`docs/plan-instancing.md`). Every mesh crosses a process boundary and is held twice, once by the engine and once by the page.
+- **Every feature twice.** A module has an engine half in C# and an interface half in TypeScript, kept in step by a protocol and by checks (`check-commands.mjs`, the catalogue). That is the source of the protocol-boundary bugs in 2.1 and 2.2, and it doubles the code an AI session must read to change one tool.
+- **The data model.** Holding IFC entities as they are is Lapin's most incumbent-like choice. IFC is an exchange schema, and the in-memory model becomes the API of Python, MCP, extensions and the store. That is the lock-in described above, already taking shape: the extension store has been live since 12.11.2026.
+
+**What a native single-process stack (Octopus's choice) would fix, and what it costs.**
+
+| Fixes | Costs |
+|---|---|
+| Memory you lay out yourself: columns and arenas rather than an object per entity, no collector pauses, files can be mapped | The browser edition becomes a separate WebAssembly build of the same code, with its own renderer backend |
+| One copy of each mesh, no serialisation between engine and screen, no stale answers | Python, MCP and shared sessions need a protocol added back, deliberately, at the edge |
+| One language: a tool is one module, not two halves | The interface is rebuilt in a native toolkit (egui or similar), which is less rich than React for forms and documents |
+| Threading checked by the compiler rather than by tests (A.3) | Most of about 630,000 lines (C# engine and TypeScript UI) to port. That is years for one person, and not something to do while users wait |
+
+**The decision this file asks for.** Do not rewrite now. Set targets now, and measure them every month at 10 times today's largest test model. Suggested targets for a 150,000-element model on a mid-range laptop:
+- opening it takes under 15 s;
+- a small edit takes under 50 ms at p95;
+- a type change across thousands of elements takes under 2 s;
+- peak memory stays under 8 GB;
+- turning the view has no p95 hitch over 33 ms.
+
+If the targets fail after the cheap fixes (see the order below), the stack is the limit, and the move starts **along the seams, never as a big-bang rewrite**:
+1. **Cheap fixes first, inside .NET.** Columnar storage for the model's hot attributes (Arrow is already the file format), pooled buffers for meshes, structs instead of classes in the geometry kernel, NativeAOT for the engine. If these meet the targets, stop.
+2. **The geometry kernel as a native library** behind a C API, as manifold already is. It is the heaviest consumer of memory and time, and the most self-contained.
+3. **The viewport as a native renderer** (wgpu) in the Tauri window, fed by the engine directly rather than through the page. The React interface stays for panels, forms and documents.
+4. **The model store** in native memory, behind `IModelView`, with C# modules reading it through the same interface.
+5. **Modules last, one by one**, while the protocol keeps the rest working. A product with users can survive this order; it cannot survive a rewrite.
+
+Whichever way the measurements go, the work in A.4 keeps the move possible. Without it the incumbents' position is where Lapin ends up by default.
 
 ### A.1 Types for the protocol, generated from the catalogue
 
@@ -261,6 +303,17 @@ The same file can give Python's `lapinbim` its type stubs, so the three clients 
 
 **Done when:** the rules are written, the one-thread/all-cores test runs in CI, and the static-field ratchet is in `pnpm check`.
 
+### A.4 Keep the move possible
+
+These cost little now and make every option in A.0 cheaper later.
+
+1. **A scale benchmark, run monthly.** Generate the 150,000-element model (extend `gen-10`'s generator) and measure A.0's targets with `EditingSpeedBench.cs` and the instancing script. Record the results in a table in this file: date, commit, each target, pass or fail. That table decides the stack question.
+2. **The protocol is the only contact between interface and engine.** Never share state any other way: no Tauri command that reaches the model, and no engine logic copied into the UI. Any part can then be replaced behind it.
+3. **The geometry kernel's interface carries no .NET-only types.** It takes plain arrays and records in, and gives meshes and B-reps out. That way it can become a native library (A.0, step 2) without touching its callers. Add a layering rule for it (1.3).
+4. **Hot paths over arrays, not object graphs.** New code that holds per-element or per-triangle data in bulk uses arrays or Arrow columns, not a list of small objects. Add this to the review checklist; measure it with the allocation numbers of `EditProf`.
+5. **The laws of 3.2 and the spec tests of 3.1 are the conformance suite.** They are written against commands and results, never against C# internals, so any replacement engine, native or not, must pass them unchanged. This is what makes a gradual move safe. The incumbents never had such a suite, and it is a large part of why they could not move.
+6. **The data model behind a mapping.** New Lapin-only concepts (intent, constraints, sub-element names) live in Lapin's own components beside the IFC entities, not inside IFC attributes. Then the in-memory model can drift from IFC where editing needs it, as Octopus's does, without breaking import and export.
+
 ## Process: how the AI work itself is run
 
 These are the parts of Octopus's process that pay off in an AI-run project, and fit Lapin's pace.
@@ -275,7 +328,7 @@ These are the parts of Octopus's process that pay off in an AI-run project, and 
 
 ## What not to take
 
-- **The rewrite into a native language and UI.** Octopus's no-webview rule is a product choice for a different stack. Lapin's Tauri + React + C# split is what lets it ship on desktop and in the browser from one codebase.
+- **A rewrite now.** Octopus's native stack answers real limits, set out in A.0. But moving now, before the scale benchmark shows the limit and without the conformance suite of 3.1–3.2, would stop Lapin for years. Any move goes along the seams, in A.0's order.
 - **Running CI only at gates.** Octopus does that to save runner minutes on a private repository. Lapin's CI on every push is better; keep it.
 - **The full work-package ceremony everywhere.** Octopus itself scopes the second-agent tests and mutation runs to code whose mistakes are silent (numbers, solids, files). Do the same: engine kernels and readers yes, panels and ribbons no.
 - **Proprietary licence rules.** Lapin stays MIT. Its own rule, permissive production dependencies, already covers what matters.
@@ -298,8 +351,11 @@ These are the parts of Octopus's process that pay off in an AI-run project, and 
 | 4 | 4.1 names for sub-elements | L | dimensions lost on edit |
 | 4 | 4.2 text form of `.lapin` | M | reviewable diffs, golden tests |
 | 4 | 4.3 platform-independent maths | M (if needed) | desktop/browser drift |
+| Arch. | A.0 stack decision on measured targets | decision | the incumbents' lock-in |
 | Arch. | A.1 protocol types from the catalogue | M | wrong arguments found at run time |
 | Arch. | A.2 interface fed by diffs | M | stale answers, at the root |
 | Arch. | A.3 threading rules and test | S–M | silent races in module generators |
 
-A.1 can go with wave 1. A.2 belongs with 2.2, and A.3 with 3.2.
+| Arch. | A.4 keep the move possible | S each | a rewrite becoming the only way out |
+
+A.1 and the benchmark of A.4 can go with wave 1. A.2 belongs with 2.2, and A.3 with 3.2. A.0 is the user's decision, made from A.4's table.
