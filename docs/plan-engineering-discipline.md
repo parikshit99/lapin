@@ -200,6 +200,67 @@ Each law is one test class with a command generator over the catalogue (`catalog
 
 **Lapin:** about 700 calls to `Math.Sin`, `Math.Cos` or `Math.Atan2` in `engine/src`. .NET's results can differ in the last bit between platforms and between desktop and the browser's WebAssembly engine. The determinism law in 3.2 tells whether this matters. If it fails, add a `Trig` module in `Lapin.Geometry` and a ratchet on direct calls. Do not do this before the law shows a difference.
 
+## Architecture: what to keep, and three ideas to adopt
+
+### The two stacks
+
+| | Octopus | Lapin |
+|---|---|---|
+| Engine | Rust, with Manifold (C++) behind one FFI file | C# on .NET 10, with Manifold and Clipper2 through their C APIs |
+| Interface | egui, drawn on the GPU in the same Rust process | React 18 + TypeScript + zustand, in a Tauri 2 web view |
+| 3D view | Its own renderer on wgpu (Vulkan, Metal, DX12, WebGPU) | three.js, three-mesh-bvh, three-gpu-pathtracer |
+| Engine ↔ interface | Function calls in one process; the UI reads the document directly | WebSocket JSON-RPC to the engine process; in the browser, a Web Worker |
+| Data model | A generic entity–component store; IFC is a mapping on export | IFC entities and objectified relationships held as they are |
+| Panels and serialisation | Generated from a derive macro on each component type | Written per module; the command catalogue is generated (`scripts/command-catalogue.mjs`) |
+| Threads | Single-threaded by contract; parallel only inside rebuilds | Parallel element builds (`Parallel.For` in `Session.cs`), concurrent deliveries |
+
+**Keep Lapin's stack.** The engine–interface protocol is what gives Lapin its browser edition, shared sessions, Python, MCP and the assistant from one codebase. A rewrite would trade all of that for gains Lapin does not need yet. The protocol has a price, though: two of the audits' three recurring causes, stale answers (2.2) and several undo steps for one gesture (2.1), live on that boundary. The three ideas below reduce that price without changing the stack.
+
+### A.1 Types for the protocol, generated from the catalogue
+
+**Octopus:** one description of each type (its derive macro) produces panels, serialisation and scripting bindings, so they cannot disagree.
+
+**Lapin:** `engine/src/Platform/Lapin.Protocol/catalogue.json` already describes every command and query with its arguments. The UI still calls `execute('name', { … })` with an untyped object. A misspelt name is caught by `check-commands.mjs`, but a wrong or missing argument is only caught at run time.
+
+**Change:**
+1. Generate `ui/src/engine/protocol.gen.ts` from the catalogue: an interface of each command's arguments and answer, and a typed `execute<K extends CommandName>(name: K, args: Args[K])` overload beside the untyped one.
+2. `command-catalogue.mjs --check` also checks that the generated file is current.
+3. Move modules to the typed overload as they are touched, with a ratchet on untyped `execute(` calls in `ui/src/modules`.
+4. Where the catalogue cannot work out an argument's type, it says `unknown`. Improve the catalogue there rather than hand-writing types.
+
+The same file can give Python's `lapinbim` its type stubs, so the three clients (UI, Python, MCP) read one description.
+
+**Done when:** a wrong argument name in a module fails `pnpm typecheck`.
+
+### A.2 The interface reads the session, and the session is fed by diffs
+
+**Octopus:** the interface never keeps a side copy of model state. It reads the document, and refreshes from the diff each transaction emits.
+
+**Lapin:** half of this is built. `ui/src/engine/session.ts` folds every engine diff into the session's nodes (`applyDiff`, skipping diffs older than what is shown). The stale answers of audit cause 3 come from panels and dialogs that bypass it, asking the engine with `query(…)` and holding the answer in local state.
+
+**Change:**
+1. **Rule:** model data a panel shows comes from the session's nodes, or from a derived query that names what it reads and is asked again when a diff touches that.
+2. Derived data that is too costly to ship in every diff (room openings, quantities, a schedule's rows) gets one engine-side query per kind. It returns the ids it read (the engine already records reads for builds), and the UI helper of 2.2 asks again only when a diff touches one of them.
+3. 2.2's ratchet on `query(` inside `useEffect` measures progress.
+
+**Done when:** the dialogs in the audit's list read the session or the helper, and none holds a model answer in `useState`.
+
+### A.3 Threading rules, written and tested
+
+**Octopus:** the core is synchronous and single-threaded by contract. Parallelism is applied only inside regeneration, over independent elements, each reading through its own view. No async below the IO layer.
+
+**Lapin:** the session builds elements on every core (`Compute` in `Session.cs`: each reads through a view of its own) and accepts concurrent deliveries (`Deliver`, with `Interlocked`/`volatile` state). This is fine as built, but the rules are only in comments. A new module's generator that writes to a static cache, or reads the store outside its view, races silently.
+
+**Change:**
+1. Write the rules down in `docs/plan.md` or a short `docs/threading.md`:
+   - What runs on worker threads: builds, emitted drawings.
+   - What they may touch: their read view, immutable inputs, and thread-safe caches named in a list.
+   - What runs only on the session's thread: commands, diffs, undo.
+2. A test runs every module's generators over a generated model twice, once on one thread and once on all cores. The geometry must be identical. A difference means shared state.
+3. A check flags new `static` mutable fields (non-`readonly` statics, and static `Dictionary`/`List`) in `engine/src/Modules`, with a baseline.
+
+**Done when:** the rules are written, the one-thread/all-cores test runs in CI, and the static-field ratchet is in `pnpm check`.
+
 ## Process: how the AI work itself is run
 
 These are the parts of Octopus's process that pay off in an AI-run project, and fit Lapin's pace.
@@ -237,3 +298,8 @@ These are the parts of Octopus's process that pay off in an AI-run project, and 
 | 4 | 4.1 names for sub-elements | L | dimensions lost on edit |
 | 4 | 4.2 text form of `.lapin` | M | reviewable diffs, golden tests |
 | 4 | 4.3 platform-independent maths | M (if needed) | desktop/browser drift |
+| Arch. | A.1 protocol types from the catalogue | M | wrong arguments found at run time |
+| Arch. | A.2 interface fed by diffs | M | stale answers, at the root |
+| Arch. | A.3 threading rules and test | S–M | silent races in module generators |
+
+A.1 can go with wave 1. A.2 belongs with 2.2, and A.3 with 3.2.
