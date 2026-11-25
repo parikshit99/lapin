@@ -1,141 +1,141 @@
-# Formatul `.lapin` în lapin-pro: Arrow / Parquet sau bază de date graf (analiză, 23.10.2026)
+# The `.lapin` format in lapin-pro: Arrow / Parquet or a graph database (analysis, 23.10.2026)
 
-**Decis:** formatul `.lapin` se păstrează.
-**Ales (24.10.2026):** recomandarea de mai jos. Ce e deja făcut e la final, în „Stare”.
+**Decided:** the `.lapin` format is kept.
+**Chosen (24.10.2026):** the recommendation below. What is already done is at the end, under "State".
 
-## Ce trebuie să poată formatul
+## What the format must be able to do
 
-1. **Să țină intenția, nu rezultatul:** parametri, tipuri, relații IFC, GlobalId-uri stabile. Geometria e derivată. Principiile din `Lapin/docs/format-lapin-nativ.md` (14.10) rămân valabile.
-2. **Deschidere și salvare rapide pe modele mari.** La salvare se rescrie doar ce s-a schimbat, iar recuperarea după o cădere se face din jurnal.
-3. **Să supraviețuiască edițiilor.** Un proiect deschis într-o ediție fără un modul își păstrează elementele acelui modul, neatinse, ca regula 4 din BubbleBIM Pro.
-4. **Să citească proiectele vechi:** `.lapin` v2 (IFC + `overlay.json` + `native/*.arrow`).
-5. **Să se potrivească cu modelul Unity / Unreal:** aplicație desktop, cu un cloud pentru conturi, actualizări și biblioteci. Mai târziu și sincronizare, versiuni și lucru în echipă.
+1. **Hold the intent, not the result:** parameters, types, IFC relationships, stable GlobalIds. Geometry is derived. The principles of `Lapin/docs/format-lapin-nativ.md` (14.10) still hold.
+2. **Open and save fast on large models.** A save rewrites only what changed, and recovery after a crash comes from the journal.
+3. **Survive editions.** A project opened in an edition without a module keeps that module's elements, untouched, like rule 4 in BubbleBIM Pro.
+4. **Read old projects:** `.lapin` v2 (IFC + `overlay.json` + `native/*.arrow`).
+5. **Fit the Unity / Unreal model:** a desktop application, with a cloud for accounts, updates and libraries. Later also synchronisation, versions and teamwork.
 
-## Ce fac Unity și Unreal
+## What Unity and Unreal do
 
-| | Sursa (se salvează) | Derivatul (se regenerează) | Cloud |
+| | The source (saved) | The derived data (regenerated) | Cloud |
 |---|---|---|---|
-| Unity | asset-uri text (YAML) + `.meta` cu GUID stabil | `Library/` (cache, se poate șterge) | Asset Store: pachete de asset-uri; Unity Version Control |
-| Unreal | `.uasset` / `.umap`; *One File Per Actor* (un fișier pe obiect, pentru merge și sincronizare) | Derived Data Cache, local sau partajat | Fab / Marketplace: pachete; plugin-uri ca module separate |
+| Unity | text assets (YAML) + `.meta` with a stable GUID | `Library/` (a cache, can be deleted) | Asset Store: asset packages; Unity Version Control |
+| Unreal | `.uasset` / `.umap`; *One File Per Actor* (one file per object, for merging and sync) | Derived Data Cache, local or shared | Fab / Marketplace: packages; plug-ins as separate modules |
 
-Lecțiile pentru Lapin:
-- **identitate stabilă** pe obiect (la noi, GlobalId);
-- **sursă separată de cache;**
-- **bucăți mici** care se pot sincroniza și compara;
-- **bibliotecile sunt pachete în același format,** nu un alt sistem.
+The lessons for Lapin:
+- **a stable identity** per object (for us, the GlobalId);
+- **the source separate from the cache;**
+- **small parts** that can be synchronised and compared;
+- **libraries are packages in the same format,** not another system.
 
-## Variantele
+## The options
 
-### A. Bază de date graf (Neo4j, Memgraph, Kùzu…) ca fișier de proiect
+### A. A graph database (Neo4j, Memgraph, Kùzu…) as the project file
 
-- **Pentru:**
-  - IFC e un graf (entități + relații obiectivate), iar propagarea (îmbinări, goluri, gazde) e o traversare de graf.
-- **Împotrivă:**
-  - **Nu există una încorporabilă, MIT, vie, pentru .NET.**
-    - Neo4j e server pe JVM, GPLv3 / comercial.
-    - Memgraph e server.
-    - Kùzu (embedded, MIT) a fost arhivat la 10.10.2025, după achiziția de către Apple, și nu mai primește corecturi.
-  - Un fișier de bază de date e opac și legat de versiunea motorului. Nu se poate trimite pe e-mail cu încredere, nu se poate compara, nu se poate sincroniza pe bucăți și nu se poate repara de mână.
-  - Graful îl avem oricum **în memorie**: `Lapin.Ifc.Model` în C#, ca `GraphStore` în BubbleBIM. Interogările de dependență au loc acolo, în microsecunde, fără un limbaj de interogare.
-- **Unde ar avea sens:** în cloud, mai târziu, pentru interogări peste multe proiecte (portofoliu, biblioteci). Acolo e o decizie de server, nu de format.
+- **For:**
+  - IFC is a graph (entities + objectified relationships), and propagation (joins, openings, hosts) is a graph traversal.
+- **Against:**
+  - **There is no embeddable, MIT, maintained one for .NET.**
+    - Neo4j is a server on the JVM, GPLv3 / commercial.
+    - Memgraph is a server.
+    - Kùzu (embedded, MIT) was archived on 10.10.2025, after its acquisition by Apple, and no longer gets fixes.
+  - A database file is opaque and tied to the engine's version. It cannot be emailed with confidence, compared, synchronised in parts or repaired by hand.
+  - We have the graph **in memory** anyway: `Lapin.Ifc.Model` in C#, like `GraphStore` in BubbleBIM. Dependency queries happen there, in microseconds, without a query language.
+- **Where it would make sense:** in the cloud, later, for queries across many projects (portfolio, libraries). That is a server decision, not a format one.
 
-### B. Arrow IPC / Parquet peste tot
+### B. Arrow IPC / Parquet everywhere
 
-- **Pentru:**
-  - Arrow IPC se citește fără decodare și e deja decizia din 14.10 pentru tabelele de lucru.
-  - Biblioteca .NET (`Apache.Arrow`) e Apache-2.0.
-  - E același format bun pentru mesh-urile trimise interfeței (riscul „mesh-uri JSON” din `plan.md`).
-- **Împotrivă:**
-  - Tabelele sunt imutabile, deci o editare mică rescrie tabelul.
-  - Parametrii imbricați ajungeau în coloane JSON.
-  - Parquet e compact, dar trebuie decodat la deschidere, deci e bun pentru analiză și transfer, nu pentru lucru.
+- **For:**
+  - Arrow IPC is read without decoding, and it is already the decision of 14.10 for the working tables.
+  - The .NET library (`Apache.Arrow`) is Apache-2.0.
+  - It is the same good format for the meshes sent to the interface (the "JSON meshes" risk in `plan.md`).
+- **Against:**
+  - Tables are immutable, so a small edit rewrites the table.
+  - Nested parameters ended up in JSON columns.
+  - Parquet is compact but must be decoded on opening, so it is good for analysis and transfer, not for working.
 
-### C. SQLite ca fișier de aplicație
+### C. SQLite as an application file
 
-- **Pentru:**
-  - salvare tranzacțională și incrementală;
-  - rezistență la căderi (WAL);
-  - încărcare parțială;
-  - un singur fișier.
-- **Împotrivă:**
-  - nu se poate adresa după conținut, deci sincronizarea cu cloud-ul trebuie construită separat;
-  - nu păstrează forma pachetului v2 (zip + manifest);
-  - bibliotecile și modulele ar avea alt format decât proiectul.
-- **Rămâne rezerva**, dacă salvarea pe chunk-uri se dovedește prea lentă.
+- **For:**
+  - transactional, incremental saving;
+  - crash resistance (WAL);
+  - partial loading;
+  - a single file.
+- **Against:**
+  - it cannot be content-addressed, so cloud sync has to be built separately;
+  - it does not keep the v2 package's shape (zip + manifest);
+  - libraries and modules would have a different format from the project.
+- **It stays the fallback**, if saving in chunks proves too slow.
 
-## Recomandarea: graf în memorie, pachet pe bucăți adresate după conținut, Arrow pentru tabele, Parquet pentru analiză
+## The recommendation: a graph in memory, a package of content-addressed parts, Arrow for tables, Parquet for analysis
 
 ```
-.lapin  (zip, formatul 3; citește și formatul 2)
-manifest.json                      versiunea formatului, a schemei, a kernelului; fiecare parte cu SHA-256 și mărime;
-                                   modulele care au scris fiecare parte
-project/…                          document, vederi, planșe, desene, standarde, cataloage: JSON, ca în formatul 2
-model/<modul>/<clasă>/<etaj>.arrow intenția: un rând pe element (GlobalId, tip, etaj, parametri tipizați ca struct/list Arrow),
-                                   împărțit pe modul × clasă × etaj
+.lapin  (zip, format 3; also reads format 2)
+manifest.json                      the version of the format, the schema, the kernel; each part with its SHA-256 and size;
+                                   the modules that wrote each part
+project/…                          document, views, sheets, drawings, standards, catalogues: JSON, as in format 2
+model/<module>/<class>/<storey>.arrow the intent: one row per element (GlobalId, type, storey, parameters typed as Arrow struct/list),
+                                   split by module × class × storey
 model/types.arrow, materials.arrow, relations.arrow, properties.arrow
-model/opaque/<GlobalId>.ifc        geometrie IFC păstrată exact (elemente importate fără intenție), reemisă identic
-journal/ops.jsonl                  operațiile de la ultima compactare: recuperare acum, lucru în echipă mai târziu
-derived/<hash kernel+parametri>/   cache de mesh (binar, Arrow), se poate șterge
-versions/index.json                versiunile proiectului: fiecare un manifest al ei, cu număr, nume, notă, moment și revizii (docs/versions.md)
-versions/blobs/<sha256>            o parte numită de o versiune pe care proiectul viu nu o mai are, o singură dată
-issues/index.json                  emiterile și fișierele lor, de citit fără Lapin (sursa e înregistrarea LapinIssue din model)
-issues/blobs/<sha256>              un fișier făcut de o emitere (PDF, borderou, CSV, manifest, DXF, IFC la cerere), o singură dată
-analytics/*.parquet                tabele pentru BI, doar la versiuni sau la export
-scripts/<nume>.py                  scripturile proiectului ca text (modulul scripting, decizia 489; Lapin citește entitatea LapinScript), părți ale modulului în manifest
-<orice altceva>                    intrările altor unelte (dag/, source/…, un fișier al lor în scripts/), păstrate octet cu octet („Părți străine”, mai jos)
+model/opaque/<GlobalId>.ifc        IFC geometry kept exactly (elements imported without intent), written back identically
+journal/ops.jsonl                  the operations since the last compaction: recovery now, teamwork later
+derived/<hash kernel+parameters>/  mesh cache (binary, Arrow), can be deleted
+versions/index.json                the project's versions: each one a manifest of its own, with number, name, note, moment and revisions (docs/versions.md)
+versions/blobs/<sha256>            a part named by a version that the live project no longer has, stored once
+issues/index.json                  the issues and their files, readable without Lapin (the source is the LapinIssue record in the model)
+issues/blobs/<sha256>              a file made by an issue (PDF, transmittal, CSV, manifest, DXF, IFC on request), stored once
+analytics/*.parquet                tables for BI, only for versions or on export
+scripts/<name>.py                  the project's scripts as text (the scripting module, decision 489; Lapin reads the LapinScript entity), the module's parts in the manifest
+<anything else>                    other tools' entries (dag/, source/…, a file of theirs in scripts/), kept byte for byte ("Foreign parts", below)
 ```
 
-- **Sursa de adevăr e graful din motor.**
-  - Fișierul e doar forma lui pe disc.
-  - Salvarea rescrie doar chunk-urile murdare (modul × clasă × etaj). Între salvări, jurnalul ține editările.
-- **Proprietarul unei părți e un modul.**
-  - O parte a unui modul care lipsește din ediție se copiază înapoi neatinsă.
-  - Elementele modulului se afișează din `derived/`.
-- **Adresarea după conținut** (SHA-256, care există deja în manifestul v2) dă de la sine:
-  - **sincronizarea:** se urcă doar părțile cu hash nou;
-  - **versiunile:** o versiune e un manifest, iar părțile neschimbate sunt comune;
-  - **diff-ul** pe element, după GlobalId.
-- **Același format pentru cloud:**
-  - **biblioteca** (`.lapinlib`) e un pachet cu doar `types`, `materials`, catalogul de tâmplărie, hașurile și standardele;
-  - **ediția** e un pachet cu doar modulele ei (motor + UI); un proiect deschis într-o ediție fără un modul îi păstrează partea neatinsă.
-- **Ce se schimbă față de 14.10:**
-  - store-ul nu mai e în TypeScript, ci în C#, în motor;
-  - parametrii ca struct-uri Arrow tipizate înlocuiesc coloanele JSON;
-  - jurnalul ține operații, nu doar ultima stare, pentru că lucrul în echipă le cere.
+- **The source of truth is the graph in the engine.**
+  - The file is only its shape on disk.
+  - A save rewrites only the dirty chunks (module × class × storey). Between saves, the journal holds the edits.
+- **A part's owner is a module.**
+  - A part of a module missing from the edition is copied back untouched.
+  - The module's elements are shown from `derived/`.
+- **Content addressing** (SHA-256, already in the v2 manifest) gives for free:
+  - **sync:** only the parts with a new hash are uploaded;
+  - **versions:** a version is a manifest, and unchanged parts are shared;
+  - **the diff** per element, by GlobalId.
+- **The same format for the cloud:**
+  - **the library** (`.lapinlib`) is a package with only `types`, `materials`, the joinery catalogue, hatches and standards;
+  - **the edition** is a package with only its modules (engine + UI); a project opened in an edition without a module keeps that module's part untouched.
+- **What changes from 14.10:**
+  - the store is no longer in TypeScript but in C#, in the engine;
+  - parameters as typed Arrow structs replace the JSON columns;
+  - the journal holds operations, not only the last state, because teamwork needs them.
 
-## Formatul 2 (proiectele vechi)
+## Format 2 (old projects)
 
-La deschidere, modelul se citește din IFC-ul compactat, iar `overlay.json` se aplică peste el. Unde există, tabelele `native/*.arrow` dau parametrii direct. Proiectul se salvează apoi în formatul 3.
-Teste-specificație: `package-io.test.ts`, `project-file*.test.ts`, `versions.test.ts`, `native-tables.test.ts`.
+On opening, the model is read from the compacted IFC, and `overlay.json` is applied over it. Where they exist, the `native/*.arrow` tables give the parameters directly. The project is then saved in format 3.
+Specification tests: `package-io.test.ts`, `project-file*.test.ts`, `versions.test.ts`, `native-tables.test.ts`.
 
-## Stare (24.10.2026)
+## State (24.10.2026)
 
-**Făcut**, în `engine/src/Platform/Lapin.Package`, cu teste în `PackageTests`:
-- zip-ul formatului 3, cu `manifest.json` (format, versiune, produs, modulele cu versiunea schemei, fiecare parte cu SHA-256 și mărime, clasa → modulul care a scris-o);
+**Done**, in `engine/src/Platform/Lapin.Package`, with tests in `PackageTests`:
+- the format 3 zip, with `manifest.json` (format, version, product, the modules with their schema version, each part with its SHA-256 and size, class → the module that wrote it);
 - `project/document.json`;
-- `model/<modul>/<clasă>/<etaj>.arrow`: un rând pe entitate, cu atributele în coloane tipizate (Float64, Utf8, Boolean, listă de Float64) și restul în JSON, marcat în metadatele câmpului;
+- `model/<module>/<class>/<storey>.arrow`: one row per entity, with the attributes in typed columns (Float64, Utf8, Boolean, list of Float64) and the rest in JSON, marked in the field's metadata;
 - `model/relations.arrow`;
-- ordinea de creare, păstrată pe fiecare rând;
-- salvarea printr-un fișier temporar, apoi înlocuirea țintei;
-- refuzul unei părți deteriorate (hash greșit) și al unui proiect dintr-un Lapin mai nou;
-- o ediție fără un modul păstrează elementele lui și le scrie înapoi neatinse.
+- the creation order, kept on each row;
+- saving through a temporary file, then replacing the target;
+- refusing a damaged part (wrong hash) and a project from a newer Lapin;
+- an edition without a module keeps its elements and writes them back untouched.
 
-**Făcut și jurnalul de recuperare** (24.10.2026), dar în afara pachetului: `<app data>/recovery/*.jsonl`, cu fiecare tranzacție, undo și redo, scrise pe disc imediat (`Lapin.Host/Recovery.cs`, teste în `RecoveryTests`).
+**The recovery journal is done too** (24.10.2026), but outside the package: `<app data>/recovery/*.jsonl`, with every transaction, undo and redo, written to disk at once (`Lapin.Host/Recovery.cs`, tests in `RecoveryTests`).
 
-**Făcut și versiunile** (26.10.2026, `docs/versions.md`): `versions/index.json` ține fiecare versiune ca manifest; la salvare se scriu doar blob-urile părților pe care proiectul viu nu le mai are (adresare după conținut, cum prevedea analiza); restaurare într-un pas de undo, comparare element cu element și parte cu parte, export ca pachet de sine stătător (`PackageVersions`, `ModelCompare`, `VersionTests`).
+**Versions are done too** (26.10.2026, `docs/versions.md`): `versions/index.json` holds each version as a manifest; a save writes only the blobs of the parts the live project no longer has (content addressing, as the analysis foresaw); restoring in one undo step, comparing element by element and part by part, exporting as a self-contained package (`PackageVersions`, `ModelCompare`, `VersionTests`).
 
-**Făcute și emiterile în fișier** (31.10.2026, decizia 185, `docs/plan-cde.md`): `issues/blobs/<sha256>` ține fișierele emiterilor, adresate după conținut ca blob-urile versiunilor (aceiași octeți o singură dată, oricâte emiteri îi numesc), iar `issues/index.json` le listează pentru cine deschide zip-ul fără Lapin. Ce se scrie la salvare: hash-urile pe care înregistrările `LapinIssue` din model le țin (`stored: true`); un fișier lăsat (Delete stored files) sau o emitere ștearsă ies la următoarea salvare. Formatul rămâne 3: un fișier mai vechi, fără `issues/`, se deschide ca înainte, iar un Lapin mai vechi ignoră folderul. Blob-urile se citesc la cerere din pachetul din care s-a deschis proiectul (`PackageIssues`), cele noi stau în memorie până la salvare (teste în `CdeStoreTests`).
+**Issues in the file are done too** (31.10.2026, decision 185, `docs/plan-cde.md`): `issues/blobs/<sha256>` holds the issues' files, content-addressed like the versions' blobs (the same bytes once, however many issues name them), and `issues/index.json` lists them for whoever opens the zip without Lapin. What a save writes: the hashes that the `LapinIssue` records in the model hold (`stored: true`); a file dropped (Delete stored files) or an issue deleted goes at the next save. The format stays 3: an older file, without `issues/`, opens as before, and an older Lapin ignores the folder. Blobs are read on demand from the package the project was opened from (`PackageIssues`); new ones stay in memory until saved (tests in `CdeStoreTests`).
 
-**Făcute și părțile străine** (06.11.2026, `PackageForeign`, teste în `PackageForeignTests`): intrările pe care alte unelte le pun în zip (`dag/manifest.json`, `source/model.py`, orice folder sau fișier de la rădăcină) se citesc la deschidere și se scriu înapoi la fiecare salvare, aceiași octeți și aceeași dată din zip, după părțile lui Lapin.
-- **Ale lui Lapin** sunt numele de la rădăcină `manifest.json`, `project/`, `model/`, `versions/`, `issues/` și cele rezervate de analiza de mai sus (`journal/`, `derived/`, `analytics/`), comparate fără majuscule (un `Model/x` nu poate umbri `model/` pe un sistem de fișiere care nu le deosebește). O intrare sub ele, sau o cale cu `\`, cu un segment gol, `.` sau `..`, nu se păstrează; ce e al lui Lapin se rescrie mereu.
-- **În manifest**, separat de `parts`: `"foreign": [{path, sha256, size}]`, în ordinea căilor. Câmpul lipsește când nu există părți străine, deci un fișier fără ele se scrie exact ca înainte. Un Lapin mai vechi citește manifestul ca înainte (cititorul ignoră câmpurile necunoscute, iar hash-urile verificate sunt doar ale `parts`) și pierde părțile străine la salvare, cum făcea și înainte.
-- **Hash-ul străin nu se verifică la deschidere:** cealaltă unealtă își poate rescrie intrările între două salvări. Hash-ul spune ce a scris Lapin ultima dată, ca ea să vadă dacă intrarea s-a schimbat de atunci.
-- **Nu intră în versiuni.** O versiune ține proiectul, nu ce au lăsat alte unelte lângă el: manifestul versiunii nu are `foreign`, iar restaurarea nu le atinge. Nici exportul unei versiuni ca pachet separat nu le ia.
-- **Se țin în memorie** așa cum erau la deschidere (`ProjectFiles`, pe desktop și în browser). Dacă o unealtă scrie în fișier cât e deschis în Lapin, schimbarea ei se pierde la următoarea salvare, ca la orice două programe care editează același fișier. „Salvează ca” le duce în fișierul nou; un proiect nou pornește fără ele, iar un proiect vechi (formatul 2) nu are.
+**Foreign parts are done too** (06.11.2026, `PackageForeign`, tests in `PackageForeignTests`): the entries other tools put in the zip (`dag/manifest.json`, `source/model.py`, any folder or file at the root) are read on opening and written back at every save, the same bytes and the same zip date, after Lapin's parts.
+- **Lapin's own** are the root names `manifest.json`, `project/`, `model/`, `versions/`, `issues/` and those reserved by the analysis above (`journal/`, `derived/`, `analytics/`), compared case-insensitively (a `Model/x` cannot shadow `model/` on a file system that does not tell them apart). An entry under them, or a path with `\`, an empty segment, `.` or `..`, is not kept; what is Lapin's is always rewritten.
+- **In the manifest**, apart from `parts`: `"foreign": [{path, sha256, size}]`, in path order. The field is absent when there are no foreign parts, so a file without them is written exactly as before. An older Lapin reads the manifest as before (the reader ignores unknown fields, and the hashes checked are only those of `parts`) and loses the foreign parts on saving, as it did before.
+- **The foreign hash is not checked on opening:** the other tool may rewrite its entries between two saves. The hash says what Lapin last wrote, so that tool can see whether the entry changed since.
+- **They do not go into versions.** A version holds the project, not what other tools left beside it: the version's manifest has no `foreign`, and restoring does not touch them. Exporting a version as a separate package does not take them either.
+- **They are held in memory** as they were on opening (`ProjectFiles`, on desktop and in the browser). If a tool writes to the file while it is open in Lapin, its change is lost at the next save, as with any two programs editing the same file. "Save as" carries them into the new file; a new project starts without them, and an old project (format 2) has none.
 
-**Rămâne:**
-- cache-ul `derived/` (geometria afișată pentru modulele lipsă);
-- salvarea incrementală, care rescrie doar bucățile murdare;
+**Left:**
+- the `derived/` cache (the geometry shown for missing modules);
+- incremental saving, which rewrites only the dirty parts;
 - `analytics/*.parquet`;
-- ~~citirea formatului 2~~ făcută la M6 (24.10.2026): `LegacyPackage` citește tabelele native, `LegacyImport` reconstruiește proiectul prin comenzi;
-- bibliotecile `.lapinlib`, la M8.
+- ~~reading format 2~~ done at M6 (24.10.2026): `LegacyPackage` reads the native tables, `LegacyImport` rebuilds the project through commands;
+- the `.lapinlib` libraries, at M8.

@@ -89,6 +89,7 @@ Subagents default to Sonnet. Every code change in `engine/`, geometry, licence a
 
 The history of what was built, decision by decision, is in `docs/history.md`; the register is `docs/decisions-pending.md` (both are long: search them, never read them whole). Add a finished piece of work as a paragraph at the end of `docs/history.md` and a row in `docs/decisions-pending.md`, not here.
 
+- Engineering discipline (checks, spec tests, randomised and hostile-input tests, the audits' recurring causes turned into rules): `docs/plan-engineering-discipline.md`, taken in waves
 - Walls, joins, layers, seams, view styles: `docs/view-styles.md`, `docs/plan-direct-editing.md`
 - Doors, windows, views, sheets: `docs/plan-views-and-joinery.md`, `docs/plan-title-blocks.md`
 - Sections, site plans, rooms: `docs/sections.md`, `docs/site-plans.md`, `docs/rooms.md`, `docs/spec-site.md`
